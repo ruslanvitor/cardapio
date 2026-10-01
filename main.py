@@ -138,6 +138,7 @@ def main(page: ft.Page):
             "itens": [
                 {"name": "Margherita", "qty": 1, "price": parse_price("R$ 32,90")},
                 {"name": "Calabresa", "qty": 2, "price": parse_price("R$ 36,90")},
+                {"name": "Quatro queijos", "qty": 1, "price": parse_price("R$ 42,90")},
             ],
         },
         {
@@ -262,8 +263,25 @@ def main(page: ft.Page):
             for item in command["itens"]
             if not (item["name"] == item_name and item.get("size", "M") == item_size)
         ]
-        feedback.value = f"{item_name} tamanho {item_size} removido da comanda #{command['id']}."
+        feedback.value = f"{item_name} tamanho {item_size} removido da comanda #{command['id']}"
         refresh_all()
+
+    def adjust_item_quantity(item_name: str, item_size: str, delta: int):
+        command = commands[selected_command_index]
+        for item in command["itens"]:
+            if item["name"] == item_name and item.get("size", "M") == item_size:
+                item["qty"] += delta
+                if item["qty"] <= 0:
+                    command["itens"] = [
+                        current_item
+                        for current_item in command["itens"]
+                        if not (current_item["name"] == item_name and current_item.get("size", "M") == item_size)
+                    ]
+                    feedback.value = f"{item_name} tamanho {item_size} removido da comanda #{command['id']}"
+                else:
+                    feedback.value = f"Quantidade de {item_name} ({item_size}) atualizada para {item['qty']}."
+                refresh_all()
+                return
 
     def refresh_summary():
         command = commands[selected_command_index]
@@ -292,11 +310,26 @@ def main(page: ft.Page):
                                     expand=True,
                                 ),
                                 ft.Text(format_price(price * qty), size=15, weight=ft.FontWeight.BOLD, color="#D96347"),
-                                ft.IconButton(
-                                    icon=ft.Icons.DELETE_OUTLINE,
-                                    tooltip="Excluir item",
-                                    icon_color="#C94F3D",
-                                    on_click=lambda _event, item_name=item["name"], size=item_size: remove_item_from_command(item_name, size),
+                                ft.Row(
+                                    [
+                                        ft.IconButton(
+                                            icon=ft.Icons.REMOVE,
+                                            tooltip="Diminuir quantidade",
+                                            on_click=lambda _event, item_name=item["name"], size=item_size: adjust_item_quantity(item_name, size, -1),
+                                        ),
+                                        ft.IconButton(
+                                            icon=ft.Icons.ADD,
+                                            tooltip="Aumentar quantidade",
+                                            on_click=lambda _event, item_name=item["name"], size=item_size: adjust_item_quantity(item_name, size, 1),
+                                        ),
+                                        ft.IconButton(
+                                            icon=ft.Icons.DELETE_OUTLINE,
+                                            tooltip="Excluir item",
+                                            icon_color="#C94F3D",
+                                            on_click=lambda _event, item_name=item["name"], size=item_size: remove_item_from_command(item_name, size),
+                                        ),
+                                    ],
+                                    spacing=4,
                                 ),
                             ],
                             alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
@@ -341,6 +374,8 @@ def main(page: ft.Page):
         customer_name.value = command["cliente"]
         customer_table.value = command["mesa"]
         customer_obs.value = command["obs"]
+        clear_cart_button.disabled = not command["itens"]
+        advance_button.disabled = not command["itens"]
         refresh_command_list()
         refresh_size_selector()
         refresh_cards()
@@ -368,21 +403,23 @@ def main(page: ft.Page):
     def add_item_to_command(*_args: Any):
         command = commands[selected_command_index]
         pizza_name, _, price, _ = PIZZAS[selected_pizza_index]
-        item_price = price_for_size(price, selected_size)
+        normalized_size = selected_size.upper()
+        item_price = price_for_size(price, normalized_size)
         existing = next(
             (
                 item
                 for item in command["itens"]
-                if item["name"] == pizza_name and item.get("size", "M") == selected_size
+                if item["name"] == pizza_name and item.get("size", "M").upper() == normalized_size
             ),
             None,
         )
         if existing:
             existing["qty"] += 1
+            existing["price"] = item_price
         else:
-            command["itens"].append({"name": pizza_name, "size": selected_size, "qty": 1, "price": item_price})
+            command["itens"].append({"name": pizza_name, "size": normalized_size, "qty": 1, "price": item_price})
         command["status"] = "Aberta"
-        feedback.value = f"{pizza_name} tamanho {selected_size} adicionado à comanda #{command['id']}"
+        feedback.value = f"{pizza_name} tamanho {normalized_size} adicionado à comanda #{command['id']}"
         refresh_all()
 
     def save_customer_data(*_args: Any):
@@ -391,6 +428,18 @@ def main(page: ft.Page):
         command["mesa"] = customer_table.value.strip() or "Mesa sem definir"
         command["obs"] = customer_obs.value.strip() or "Sem observações"
         feedback.value = f"Ficha da comanda #{command['id']} salva."
+        refresh_all()
+
+    def clear_cart(*_args: Any):
+        command = commands[selected_command_index]
+        if not command["itens"]:
+            feedback.value = "O carrinho já está vazio."
+            page.update()
+            return
+
+        command["itens"] = []
+        command["status"] = "Aberta"
+        feedback.value = f"Carrinho da comanda #{command['id']} limpo."
         refresh_all()
 
     def new_command(*_args: Any):
@@ -429,6 +478,23 @@ def main(page: ft.Page):
         command["status"] = "Pronta"
         feedback.value = f"Comanda #{command['id']} pronta para entrega."
         refresh_all()
+
+    clear_cart_button = ft.OutlinedButton(
+        "Cancelar pedido",
+        icon=ft.Icons.DELETE_SWEEP,
+        on_click=clear_cart,
+        disabled=True,
+        style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=12)),
+    )
+    advance_button = ft.FilledButton(
+        "Avançar",
+        icon=ft.Icons.ARROW_FORWARD,
+        on_click=finalize_order,
+        bgcolor="#E85D4A",
+        color="#FFFFFF",
+        disabled=True,
+        style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=12)),
+    )
 
     page.add(
         ft.Container(
@@ -567,20 +633,14 @@ def main(page: ft.Page):
                                 ),
                                 ft.Row(
                                     [
+                                        clear_cart_button,
                                         ft.OutlinedButton(
                                             "Enviar para cozinha",
                                             icon=ft.Icons.KITCHEN,
                                             on_click=send_to_kitchen,
                                             style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=12)),
                                         ),
-                                        ft.FilledButton(
-                                            "Finalizar",
-                                            icon=ft.Icons.CHECK_CIRCLE,
-                                            on_click=finalize_order,
-                                            bgcolor="#E85D4A",
-                                            color="#FFFFFF",
-                                            style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=12)),
-                                        ),
+                                        advance_button,
                                     ],
                                     alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
                                 ),
@@ -598,4 +658,5 @@ def main(page: ft.Page):
     refresh_all()
 
 
-ft.run(main)
+if __name__ == "__main__":
+    ft.run(main)
