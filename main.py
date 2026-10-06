@@ -1,3 +1,4 @@
+import asyncio
 from typing import Any, Callable
 
 import flet as ft
@@ -9,6 +10,7 @@ PIZZAS: list[tuple[str, str, str, str]] = [
     ("Quatro queijos", "Mussarela, provolone, parmesão e gorgonzola", "R$ 42,90", "#6E9E78"),
 ]
 PIZZA_SIZE_MULTIPLIERS = {"P": 0.8, "M": 1.0, "G": 1.25}
+DELIVERY_TAX = 6.0
 
 
 def parse_price(value: str) -> float:
@@ -127,14 +129,23 @@ def main(page: ft.Page):
     selected_pizza_index: int = 0
     selected_size = "M"
     selected_command_index: int = 0
+    delivery_ready_flags: dict[int, bool] = {}
+    delivery_countdown: dict[int, int] = {}
 
     commands: list[dict[str, Any]] = [
         {
             "id": 101,
             "cliente": "Marina Costa",
+            "telefone": "11987654321",
             "mesa": "Mesa 12",
             "status": "Aberta",
             "obs": "Sem cebola",
+            "tipo_entrega": "Entrega",
+            "forma_pagamento": "Dinheiro",
+            "endereco": "Rua das Flores",
+            "numero": "120",
+            "bairro": "Centro",
+            "complemento": "Apartamento 3",
             "itens": [
                 {"name": "Margherita", "qty": 1, "price": parse_price("R$ 32,90")},
                 {"name": "Calabresa", "qty": 2, "price": parse_price("R$ 36,90")},
@@ -144,9 +155,16 @@ def main(page: ft.Page):
         {
             "id": 102,
             "cliente": "João Pereira",
+            "telefone": "11976543210",
             "mesa": "Mesa 05",
             "status": "Na cozinha",
             "obs": "Sem oregano",
+            "tipo_entrega": "Retirada",
+            "forma_pagamento": "Dinheiro",
+            "endereco": "",
+            "numero": "",
+            "bairro": "",
+            "complemento": "",
             "itens": [
                 {"name": "Quatro queijos", "qty": 1, "price": parse_price("R$ 42,90")},
             ],
@@ -154,27 +172,44 @@ def main(page: ft.Page):
         {
             "id": 103,
             "cliente": "Ana Souza",
+            "telefone": "11912345678",
             "mesa": "Take Away",
             "status": "Aberta",
             "obs": "Entregar sem molho extra",
+            "tipo_entrega": "Entrega",
+            "forma_pagamento": "Pix",
+            "endereco": "Avenida Paulista",
+            "numero": "500",
+            "bairro": "Bela Vista",
+            "complemento": "Bloco A",
             "itens": [],
         },
     ]
 
-    command_list = ft.Column(spacing=10)
+    command_list = ft.Column(spacing=10, scroll=ft.ScrollMode.AUTO)
     menu_cards = ft.Row(spacing=18, scroll=ft.ScrollMode.AUTO)
     size_selector = ft.Row(spacing=8)
-    items_column = ft.Column(spacing=10, expand=True)
-    kitchen_column = ft.Column(spacing=10, expand=True)
+    items_column = ft.Column(spacing=10, expand=True, scroll=ft.ScrollMode.AUTO)
+    kitchen_column = ft.Column(spacing=10, expand=True, scroll=ft.ScrollMode.AUTO)
     feedback = ft.Text("", size=14, color="#1E7E57", weight=ft.FontWeight.BOLD)
+    delivery_status_text = ft.Text("", size=12, color="#D78D1B", weight=ft.FontWeight.BOLD)
     total_text = ft.Text("", size=26, weight=ft.FontWeight.BOLD, color="#D96347")
+    error_text = ft.Text("", size=12, color="#C93A32")
 
     customer_name = ft.TextField(label="Nome do cliente", value=commands[selected_command_index]["cliente"])
+    customer_phone = ft.TextField(label="Telefone", value=commands[selected_command_index].get("telefone", ""), keyboard_type=ft.KeyboardType.NUMBER)
     customer_table = ft.TextField(label="Mesa / local", value=commands[selected_command_index]["mesa"])
     customer_obs = ft.TextField(label="Observações", value=commands[selected_command_index]["obs"], multiline=True, min_lines=2, max_lines=4)
+    customer_address = ft.TextField(label="Rua", value=commands[selected_command_index].get("endereco", ""))
+    customer_number = ft.TextField(label="Número", value=commands[selected_command_index].get("numero", ""), keyboard_type=ft.KeyboardType.NUMBER)
+    customer_district = ft.TextField(label="Bairro", value=commands[selected_command_index].get("bairro", ""))
+    customer_complement = ft.TextField(label="Complemento", value=commands[selected_command_index].get("complemento", ""))
 
     def get_total(command: dict[str, Any]) -> float:
-        return sum(item["qty"] * item["price"] for item in command["itens"])
+        subtotal = sum(item["qty"] * item["price"] for item in command["itens"])
+        if command.get("tipo_entrega") == "Entrega":
+            return subtotal + DELIVERY_TAX
+        return subtotal
 
     def status_badge(status: str) -> tuple[str, str]:
         colors = {
@@ -369,19 +404,76 @@ def main(page: ft.Page):
             for size in PIZZA_SIZE_MULTIPLIERS
         ]
 
+    def validate_customer_data(command: dict[str, Any]) -> bool:
+        name = customer_name.value.strip()
+        phone = customer_phone.value.strip()
+        if not name:
+            error_text.value = "Informe o nome do cliente."
+            return False
+
+        digits = "".join(char for char in phone if char.isdigit())
+        if len(digits) not in {10, 11}:
+            error_text.value = "Telefone deve conter 10 ou 11 dígitos."
+            return False
+
+        if command.get("tipo_entrega") == "Entrega":
+            if not customer_address.value.strip():
+                error_text.value = "Para entrega, informe a rua."
+                return False
+            if not customer_number.value.strip():
+                error_text.value = "Para entrega, informe o número do endereço."
+                return False
+            if not customer_district.value.strip():
+                error_text.value = "Para entrega, informe o bairro."
+                return False
+
+        error_text.value = ""
+        return True
+
     def refresh_all():
         command = commands[selected_command_index]
         customer_name.value = command["cliente"]
+        customer_phone.value = command.get("telefone", "")
         customer_table.value = command["mesa"]
         customer_obs.value = command["obs"]
+        customer_address.value = command.get("endereco", "")
+        customer_number.value = command.get("numero", "")
+        customer_district.value = command.get("bairro", "")
+        customer_complement.value = command.get("complemento", "")
+        delivery_method = command.get("tipo_entrega", "Retirada")
+        delivery_choice.value = delivery_method
+        payment_choice.value = command.get("forma_pagamento", "Dinheiro")
+        address_section.visible = delivery_method == "Entrega"
+        error_text.value = ""
         clear_cart_button.disabled = not command["itens"]
         advance_button.disabled = not command["itens"]
+        if command["status"] == "Na cozinha":
+            if delivery_ready_flags.get(command["id"], False):
+                delivery_status_text.value = "Pronto para entrega"
+            else:
+                remaining = delivery_countdown.get(command["id"], 60)
+                delivery_status_text.value = f"Pronto em {remaining}s"
+            delivery_status_text.visible = True
+        else:
+            delivery_status_text.value = ""
+            delivery_status_text.visible = False
+        delivery_button.visible = command["status"] == "Na cozinha" and delivery_ready_flags.get(command["id"], False)
         refresh_command_list()
         refresh_size_selector()
         refresh_cards()
         refresh_summary()
         refresh_kitchen_queue()
         page.update()
+
+    def choose_delivery_type(selected_type: str):
+        command = commands[selected_command_index]
+        command["tipo_entrega"] = selected_type
+        refresh_all()
+
+    def choose_payment_type(selected_type: str):
+        command = commands[selected_command_index]
+        command["forma_pagamento"] = selected_type
+        refresh_all()
 
     def select_command(index: int):
         nonlocal selected_command_index
@@ -424,10 +516,22 @@ def main(page: ft.Page):
 
     def save_customer_data(*_args: Any):
         command = commands[selected_command_index]
+        if not validate_customer_data(command):
+            page.update()
+            return
+
         command["cliente"] = customer_name.value.strip() or "Cliente sem nome"
+        command["telefone"] = customer_phone.value.strip()
         command["mesa"] = customer_table.value.strip() or "Mesa sem definir"
         command["obs"] = customer_obs.value.strip() or "Sem observações"
+        command["tipo_entrega"] = delivery_choice.value
+        command["forma_pagamento"] = payment_choice.value
+        command["endereco"] = customer_address.value.strip()
+        command["numero"] = customer_number.value.strip()
+        command["bairro"] = customer_district.value.strip()
+        command["complemento"] = customer_complement.value.strip()
         feedback.value = f"Ficha da comanda #{command['id']} salva."
+        error_text.value = ""
         refresh_all()
 
     def clear_cart(*_args: Any):
@@ -449,12 +553,20 @@ def main(page: ft.Page):
             {
                 "id": next_id,
                 "cliente": "Novo cliente",
+                "telefone": "",
                 "mesa": "Nova mesa",
                 "status": "Aberta",
                 "obs": "",
+                "tipo_entrega": "Retirada",
+                "forma_pagamento": "Dinheiro",
+                "endereco": "",
+                "numero": "",
+                "bairro": "",
+                "complemento": "",
                 "itens": [],
             }
         )
+        delivery_ready_flags[next_id] = False
         selected_command_index = len(commands) - 1
         feedback.value = f"Nova comanda aberta: #{next_id}"
         refresh_all()
@@ -465,14 +577,42 @@ def main(page: ft.Page):
             feedback.value = "Adicione ao menos um item antes de enviar para cozinha."
             page.update()
             return
+        if not validate_customer_data(command):
+            page.update()
+            return
+
+        command_id = command["id"]
         command["status"] = "Na cozinha"
-        feedback.value = f"Pedido da comanda #{command['id']} enviado para a cozinha."
+        delivery_ready_flags[command_id] = False
+        delivery_countdown[command_id] = 60
+        delivery_button.visible = False
+        delivery_status_text.value = "Pronto em 60s"
+        delivery_status_text.visible = True
+        feedback.value = f"Pedido da comanda #{command_id} enviado para a cozinha."
+
+        async def wait_for_delivery_ready(command_id: int):
+            for remaining in range(60, 0, -1):
+                delivery_countdown[command_id] = remaining
+                if command_id == commands[selected_command_index]["id"]:
+                    delivery_status_text.value = f"Pronto em {remaining}s"
+                    page.update()
+                await asyncio.sleep(1)
+
+            delivery_ready_flags[command_id] = True
+            delivery_countdown.pop(command_id, None)
+            feedback.value = f"Comanda #{command_id} pronta para entrega."
+            refresh_all()
+
+        page.run_task(wait_for_delivery_ready, command_id)
         refresh_all()
 
     def finalize_order(*_args: Any):
         command = commands[selected_command_index]
         if not command["itens"]:
             feedback.value = "Não há itens para finalizar."
+            page.update()
+            return
+        if not validate_customer_data(command):
             page.update()
             return
         command["status"] = "Pronta"
@@ -494,6 +634,47 @@ def main(page: ft.Page):
         color="#FFFFFF",
         disabled=True,
         style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=12)),
+    )
+    delivery_button = ft.FilledButton(
+        "Enviar para entrega",
+        icon=ft.Icons.DELIVERY_DINING,
+        on_click=finalize_order,
+        bgcolor="#2E8B57",
+        color="#FFFFFF",
+        visible=False,
+        style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=12)),
+    )
+    delivery_choice = ft.RadioGroup(
+        value=commands[selected_command_index].get("tipo_entrega", "Retirada"),
+        content=ft.Row(
+            [
+                ft.Radio(value="Retirada", label="Retirada"),
+                ft.Radio(value="Entrega", label="Entrega"),
+            ],
+            spacing=18,
+        ),
+        on_change=lambda e: choose_delivery_type(e.control.value),
+    )
+    payment_choice = ft.RadioGroup(
+        value=commands[selected_command_index].get("forma_pagamento", "Dinheiro"),
+        content=ft.Row(
+            [
+                ft.Radio(value="Dinheiro", label="Dinheiro"),
+                ft.Radio(value="Cartão", label="Cartão"),
+                ft.Radio(value="Pix", label="Pix"),
+            ],
+            spacing=18,
+        ),
+        on_change=lambda e: choose_payment_type(e.control.value),
+    )
+    address_section = ft.Column(
+        [
+            customer_address,
+            ft.Row([customer_number, customer_district], spacing=12),
+            customer_complement,
+        ],
+        spacing=10,
+        visible=commands[selected_command_index].get("tipo_entrega", "Retirada") == "Entrega",
     )
 
     page.add(
@@ -613,8 +794,15 @@ def main(page: ft.Page):
                                 ),
                                 ft.Divider(height=10, color="transparent"),
                                 customer_name,
+                                customer_phone,
+                                ft.Text("Tipo de recebimento", size=13, weight=ft.FontWeight.BOLD, color="#2B1D18"),
+                                delivery_choice,
+                                ft.Text("Forma de pagamento", size=13, weight=ft.FontWeight.BOLD, color="#2B1D18"),
+                                payment_choice,
+                                address_section,
                                 customer_table,
                                 customer_obs,
+                                error_text,
                                 ft.Divider(height=10, color="transparent"),
                                 ft.Text("Pedido atual", size=16, weight=ft.FontWeight.BOLD, color="#2B1D18"),
                                 items_column,
@@ -640,10 +828,12 @@ def main(page: ft.Page):
                                             on_click=send_to_kitchen,
                                             style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=12)),
                                         ),
+                                        delivery_button,
                                         advance_button,
                                     ],
                                     alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
                                 ),
+                                delivery_status_text,
                                 feedback,
                             ],
                             spacing=8,
